@@ -1,0 +1,9 @@
+/videos
+/audios
+/screenshots
+/results
+*.dll
+*.exe
+venv/
+.vscode/
+__pycache__/
