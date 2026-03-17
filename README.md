@@ -66,3 +66,9 @@ pip install moviepy faster-whisper jieba opencv-python fpdf2 tqdm
 - `KEYWORDS`: 你可以自由修改想要捕捉的提示词。例如英语课可以改成 `["important", "exam", "test"]` 等。
 - `MODEL_SIZE`: Whisper 模型大小。默认为 `"small"`，如果你的显存足够大，可以改成 `"medium"` 或 `"large-v3"` 以获取极高的识别准确率。
 - `STOP_WORDS`: 如果发现生成的讲义中混进了一些老师的口头禅（如“同学们”、“然后”），可以将其加入到这个停用词列表中自动过滤。
+
+## 第一次更新
+1. 改进keywords和stop_words生成逻辑
+2. 改进PPT提取逻辑
+3. 改进语音识别
+4. 提高生成内容质量
