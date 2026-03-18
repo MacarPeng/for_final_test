@@ -72,3 +72,8 @@ pip install moviepy faster-whisper jieba opencv-python fpdf2 tqdm
 2. 改进PPT提取逻辑
 3. 改进语音识别
 4. 提高生成内容质量
+## 第二次更新
+1. 改进keywords和stop_words生成逻辑为AI自动分析文本生成
+2. 改进提示词
+3. 改进PPT抓取逻辑，由视频中直接截取改为自行上传完整PPT文件（.pptx或.pdf）从上传文件中根据关键词抓取
+4. 修改pdf生成bug

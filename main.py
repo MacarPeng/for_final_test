@@ -520,200 +520,222 @@ def convert_ppt_to_images(ppt_path, selected_pages, output_dir):
     
     return saved_images
 
-# PDF 页面类
+# ================= 彻底修复版 PDF 模块 =================
+
 class MyCoursePDF(FPDF):
     def footer(self):
+        """底栏页码"""
         self.set_y(-15)
         self.set_font("Hans", size=10)
         self.set_text_color(150, 150, 150)
+        # 使用 fpdf2 推荐的 new_x 模式
         self.cell(0, 10, text=f"第 {self.page_no()} 页", align="C")
 
 def create_final_pdf(analysis_results, course_name, filename):
-    """创建课堂笔记PDF"""
+    """创建课堂笔记PDF - 终极修复版"""
+    print(f"📑 正在排版生成：{filename}")
     pdf = MyCoursePDF()
-    pdf.add_font("Hans", "", FONT_PATH)
-    pdf.add_font("Hans", "B", FONT_PATH)
+    
+    # 注册字体
+    try:
+        pdf.add_font("Hans", "", FONT_PATH)
+        pdf.add_font("Hans", "B", FONT_PATH)
+    except:
+        print("❌ 警告：字体加载失败")
 
-    # 封面
+    # --- 1. 封面 ---
     pdf.add_page()
     pdf.set_font("Hans", size=30)
     pdf.ln(60)
-    pdf.cell(0, 20, text=course_name, align='C')
-    pdf.ln(20)
+    pdf.cell(0, 20, text=course_name, align='C', new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Hans", size=18)
-    pdf.cell(0, 20, text="AI 智能复习讲义", align='C')
-    pdf.ln(20)
+    pdf.cell(0, 20, text="AI 智能辅助复习讲义", align='C', new_x="LMARGIN", new_y="NEXT")
     pdf.ln(40)
     pdf.set_font("Hans", size=12)
-    pdf.cell(0, 10, text=f"生成日期：{datetime.now().strftime('%Y-%m-%d')}", align='C')
-    pdf.ln(10)
+    pdf.cell(0, 10, text=f"生成日期：{datetime.now().strftime('%Y-%m-%d')}", align='C', new_x="LMARGIN", new_y="NEXT")
 
-    # 内容页
+    # --- 2. 内容页 ---
     for item in analysis_results:
         pdf.add_page()
         
+        # A. 时间标题
         t = item.get('hit_time', 0)
         pdf.set_fill_color(240, 240, 240)
         pdf.set_font("Hans", size=15)
-        pdf.cell(0, 12, text=f"重点片段：{int(t // 60)}分{int(t % 60)}秒", fill=True)
+        time_text = f"重点片段：{int(t // 60)}分{int(t % 60)}秒"
+        pdf.cell(180, 12, text=time_text, fill=True, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(5)
 
-        # 核心词汇
+        # B. 核心词汇 - 强制重置 X 坐标
+        pdf.set_x(10)
         pdf.set_font("Hans", size=12)
         pdf.set_text_color(31, 73, 125)
         keywords = item.get('top_words', [])
-        pdf.multi_cell(0, 10, text="核心词汇：" + " | ".join(keywords))
+        # 核心修复：将 0 宽度改为 180 固定宽度
+        pdf.multi_cell(180, 10, text="核心词汇：" + " | ".join(keywords))
         pdf.ln(2)
         
-        # 结构化重点
+        # C. 结构化重点 (Bullet Points) - 修复崩溃点
         if item.get('structured_points'):
             pdf.set_text_color(80, 80, 80)
-            pdf.set_font("Hans", size=11)
-            pdf.cell(0, 8, text="📋 重点详解：")
-            pdf.ln(8)
+            pdf.set_font("Hans", size=11, style="B")
+            pdf.set_x(10)
+            pdf.cell(180, 8, text="📋 重点详解：", new_x="LMARGIN", new_y="NEXT")
+            
             for point in item['structured_points']:
-                pdf.set_font("Hans", size=10)
-                pdf.multi_cell(0, 7, text=f"• {point}")
+                pdf.set_font("Hans", size=10, style="")
+                pdf.set_x(15) # 设置缩进
+                # 核心修复：使用固定宽度 175，避免 0 宽度计算错误
+                pdf.multi_cell(175, 7, text=f"• {point}")
+                pdf.ln(1)
             pdf.ln(3)
 
-        # AI 摘要
+        # D. AI 摘要 - 修复颜色和背景冲突
         pdf.set_fill_color(252, 243, 207)
         pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Hans", size=12)
-        pdf.cell(0, 8, text="【AI 考点总结】：")
-        pdf.ln(8)
-        pdf.set_font("Hans", size=11)
-        summary_text = clean_text_for_pdf(item.get('summary', ''))
-        try:
-            pdf.multi_cell(0, 8, text=summary_text, fill=True)
-        except Exception as e:
-            print(f"⚠️ 渲染摘要时出错: {e}")
-            pdf.cell(0, 8, text=summary_text[:100] + "...")
+        pdf.set_font("Hans", size=12, style="B")
+        pdf.set_x(10)
+        pdf.cell(180, 8, text="【AI 考点总结】：", new_x="LMARGIN", new_y="NEXT")
         
-        # 复习建议
+        pdf.set_font("Hans", size=11, style="")
+        pdf.set_x(10)
+        summary_text = clean_text_for_pdf(item.get('summary', ''))
+        # 核心修复：固定宽度 180
+        pdf.multi_cell(180, 8, text=summary_text, fill=True)
+        
+        # E. 复习建议
         if item.get('review_tips'):
-            pdf.ln(3)
+            pdf.ln(5)
             pdf.set_fill_color(230, 245, 230)
             pdf.set_text_color(0, 100, 0)
-            pdf.set_font("Hans", size=10)
+            pdf.set_x(10)
             review_text = clean_text_for_pdf(item['review_tips'])
-            pdf.multi_cell(0, 7, text="📖 复习建议：" + review_text, fill=True)
+            pdf.multi_cell(180, 7, text="📖 复习建议：" + review_text, fill=True)
 
-    pdf.output(filename)
-    print(f"✨ 最终讲义已保存至: {filename}")
+    # --- 3. 保存 ---
+    try:
+        pdf.output(filename)
+        print(f"✨ 最终讲义已成功保存至: {filename}")
+    except Exception as e:
+        print(f"❌ PDF 导出失败: {e}")
 
+# 2. 如果你需要带 PPT 截图的 PDF，也请使用下面这个修复版
 def create_pdf_with_ppt(analysis_results, ppt_images, course_name, filename):
-    """创建包含PPT页面的PDF"""
+    """创建包含 PPT 页面和 AI 课堂分析的综合 PDF - 深度排版加固版"""
+    print(f"📑 正在排版生成综合讲义：{filename}")
     pdf = MyCoursePDF()
-    pdf.add_font("Hans", "", FONT_PATH)
-    pdf.add_font("Hans", "B", FONT_PATH)
     
-    # 封面
+    # 1. 注册字体 (确保使用本地存在的路径)
+    try:
+        pdf.add_font("Hans", "", FONT_PATH)
+        pdf.add_font("Hans", "B", FONT_PATH)
+    except:
+        print("❌ 警告：字体加载失败")
+
+    # --- 第一部分：封面 ---
     pdf.add_page()
     pdf.set_font("Hans", size=30)
     pdf.ln(60)
-    pdf.cell(0, 20, text=course_name, align='C')
-    pdf.ln(20)
+    pdf.cell(0, 20, text=course_name, align='C', new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Hans", size=18)
-    pdf.cell(0, 20, text="AI 智能复习讲义", align='C')
-    pdf.ln(20)
+    pdf.cell(0, 20, text="AI 智能辅助复习讲义 (含 PPT 重点页)", align='C', new_x="LMARGIN", new_y="NEXT")
     pdf.ln(40)
     pdf.set_font("Hans", size=12)
-    pdf.cell(0, 10, text=f"生成日期：{datetime.now().strftime('%Y-%m-%d')}", align='C')
-    pdf.ln(10)
-    
-    # PPT相关页面
+    pdf.cell(0, 10, text=f"生成日期：{datetime.now().strftime('%Y-%m-%d %H:%M')}", align='C', new_x="LMARGIN", new_y="NEXT")
+
+    # --- 第二部分：PPT 重点页面汇总 (如果有) ---
     if ppt_images:
         pdf.add_page()
-        pdf.set_font("Hans", size=20)
-        pdf.cell(0, 15, text="📚 PPT 重点页面", align='C')
-        pdf.ln(15)
+        pdf.set_font("Hans", size=22, style="B")
+        pdf.set_text_color(44, 62, 80)
+        pdf.cell(0, 20, text="📚 关联 PPT 重点页面", align='C', new_x="LMARGIN", new_y="NEXT")
         pdf.ln(10)
         
         for item in ppt_images:
             img_path = item['img_path']
             if os.path.exists(img_path):
+                # 检查页面剩余空间，如果不够放图则换页
+                if pdf.get_y() > 180:
+                    pdf.add_page()
+                
                 pdf.image(img_path, x=15, w=180)
-                pdf.ln(5)
+                pdf.set_y(pdf.get_y() + 5) # 稍微往下挪一点
                 pdf.set_font("Hans", size=10)
-                pdf.cell(0, 8, text=f"PPT 第{item['page']}页", align='C')
-                pdf.ln(8)
+                pdf.set_text_color(100, 100, 100)
+                pdf.cell(0, 10, text=f"PPT 第 {item['page']} 页", align='C', new_x="LMARGIN", new_y="NEXT")
                 pdf.ln(10)
-    
-    # 课堂重点内容
+        pdf.set_text_color(0, 0, 0) # 颜色恢复黑色
+
+    # --- 第三部分：课堂重点深度分析 ---
     for item in analysis_results:
         pdf.add_page()
         
-        t = item['hit_time']
+        # A. 标题栏
+        t = item.get('hit_time', 0)
         pdf.set_fill_color(240, 240, 240)
-        pdf.set_font("Hans", size=15)
-        pdf.cell(0, 12, text=f"重点片段：{int(t // 60)}分{int(t % 60)}秒", fill=True)
-        pdf.ln(12) # 明确告诉它换行多少毫米
-        pdf.ln(5)
-        
-        pdf.set_font("Hans", size=12)
-        pdf.set_text_color(31, 73, 125)
-        pdf.multi_cell(0, 10, text="核心词汇：" + " | ".join(item['top_words']))
-        pdf.ln(2)
-        
-        # 考点预测
-        if item.get('exam_points'):
-            pdf.set_text_color(180, 50, 50)
-            pdf.set_font("Hans", size=11)
-            pdf.multi_cell(0, 8, text="💡 考点预测：" + " | ".join(item['exam_points']))
-            pdf.ln(2)
-        
-        pdf.set_fill_color(252, 243, 207)
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Hans", size=12)
-        pdf.cell(0, 8, text="【AI 考点总结】：")
-        pdf.ln(8)
-        pdf.set_font("Hans", size=11)
-        # 清理文本并处理可能的问题
-        summary_text = clean_text_for_pdf(item.get('summary', ''))
-        try:
-            pdf.multi_cell(0, 8, text=summary_text, fill=True)
-        except Exception as e:
-            print(f"⚠️ 渲染摘要时出错，使用简化版本: {e}")
-            pdf.cell(0, 8, text=summary_text[:100] + "...")
+        pdf.set_font("Hans", size=15, style="B")
+        time_text = f"重点片段：{int(t // 60)}分{int(t % 60)}秒"
+        pdf.cell(180, 12, text=time_text, fill=True, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(5)
 
-        # 核心词汇
+        # B. 核心词汇
+        pdf.set_x(10) # 强制重置 X 坐标
         pdf.set_font("Hans", size=12)
         pdf.set_text_color(31, 73, 125)
-        pdf.multi_cell(0, 10, text="核心词汇：" + " | ".join(item['top_words']))
+        keywords = item.get('top_words', [])
+        pdf.multi_cell(180, 10, text="核心词汇：" + " | ".join(keywords))
         pdf.ln(2)
         
-        # 结构化重点（如果有）
+        # C. 结构化重点 (详解列表)
         if item.get('structured_points'):
             pdf.set_text_color(80, 80, 80)
-            pdf.set_font("Hans", size=11)
-            pdf.cell(0, 8, text="📋 重点详解：")
-            pdf.ln(8)
-            pdf.ln(2)
+            pdf.set_font("Hans", size=11, style="B")
+            pdf.set_x(10)
+            pdf.cell(180, 8, text="📋 重点详解：", new_x="LMARGIN", new_y="NEXT")
+            
             for point in item['structured_points']:
-                pdf.set_font("Hans", size=10)
-                pdf.multi_cell(0, 7, text=f"• {point}")
+                pdf.set_font("Hans", size=10, style="")
+                pdf.set_x(15) # 设置缩进
+                # 使用固定宽度 175，防止 horizontal space 报错
+                pdf.multi_cell(175, 7, text=f"• {point}")
             pdf.ln(3)
 
-        # AI 摘要 (黄色背景)
+        # D. AI 考点总结 (黄色背景区域)
         pdf.set_fill_color(252, 243, 207)
         pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Hans", size=12)
-        pdf.cell(0, 8, text="【AI 考点总结】：")
-        pdf.ln(8)
-        pdf.set_font("Hans", size=11)
-        pdf.multi_cell(0, 8, text=item['summary'], fill=True)
-        pdf.ln(5)  # 明确指定换行距离
-        # ❌ 这里绝对不能有 pdf.output()
+        pdf.set_font("Hans", size=12, style="B")
+        pdf.set_x(10)
+        pdf.cell(180, 8, text="【AI 考点总结】：", new_x="LMARGIN", new_y="NEXT")
+        
+        pdf.set_font("Hans", size=11, style="")
+        pdf.set_x(10)
+        summary_text = clean_text_for_pdf(item.get('summary', ''))
+        # 强制 180 宽度
+        pdf.multi_cell(180, 8, text=summary_text, fill=True)
+        
+        # E. 复习建议 (绿色背景区域)
+        if item.get('review_tips'):
+            pdf.ln(5)
+            pdf.set_fill_color(230, 245, 230)
+            pdf.set_text_color(0, 100, 0)
+            pdf.set_x(10)
+            pdf.set_font("Hans", size=11, style="B")
+            pdf.cell(180, 8, text="📖 复习建议：", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("Hans", size=10, style="")
+            pdf.set_x(10)
+            review_text = clean_text_for_pdf(item['review_tips'])
+            pdf.multi_cell(180, 7, text=review_text, fill=True)
 
-    # --- 3. 封包保存 (关键：必须在 for 循环完全结束后执行) ---
-    # 请确保这一行代码的缩进和上面的 for 对齐，而不是缩进在 for 里面
-    pdf.output(filename)
-    print(f"✨ 最终讲义已成功保存至: {filename}")
+    # --- 最后一步：保存 PDF ---
+    try:
+        pdf.output(filename)
+        print(f"✨ 包含 PPT 的综合讲义已成功保存至: {filename}")
+    except Exception as e:
+        print(f"❌ PDF 导出失败: {e}")
+
 # 1. 初始化客户端 (确保 API Key 已填)
 client = OpenAI(
-    api_key="sk-3c053eb85fae49459e2fe76158aa510b", 
+    api_key="YOUR_API_KEY_HERE", 
     base_url="https://api.deepseek.com",
     timeout=60.0 # 长视频分析较慢，设置60秒超时
 )
