@@ -22,8 +22,21 @@
 在项目根目录下，打开终端（Terminal 或 PowerShell），运行以下命令安装必备的库：
 
 ```bash
-pip install moviepy faster-whisper jieba opencv-python fpdf2 tqdm
+pip install moviepy python-pptx pillow faster-whisper jieba opencv-python fpdf2 tqdm openai pypdf
 ```
+
+`main.py` 中使用到的第三方库如下（按导入模块名列出）：
+
+- `moviepy`
+- `pptx`（对应 pip 包：`python-pptx`）
+- `PIL`（对应 pip 包：`pillow`）
+- `faster_whisper`（对应 pip 包：`faster-whisper`）
+- `jieba`（含 `jieba.analyse`）
+- `cv2`（对应 pip 包：`opencv-python`）
+- `fpdf`（对应 pip 包：`fpdf2`）
+- `tqdm`
+- `openai`
+- `pypdf`
 
 > **注意**：
 > - 代码中默认使用了 GPU 加速 (`device="cuda"`) 进行 AI 识别，建议在有 Nvidia 显卡的电脑上配置相应的 CUDA 环境。如果你没有独立显卡，可以打开 `main.py` 将 `device="cuda"` 更改为 `device="cpu"`，并把 `compute_type="int8"` 改为 `compute_type="int8"` 或 `compute_type="float32"` 以便在 CPU 上运行。
