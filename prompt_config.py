@@ -24,9 +24,17 @@ SKILLS = {
 
 3. 如果这段内容是无关的，请明确标记并返回空考点。
 
+4. 必须进行重要程度分级：
+    - exam: 明确考试考点、老师说会考/必考/出题、典型例题与解题套路
+    - focus: 老师明确强调重点、核心概念定义与关键原理（但未明确指向考试）
+    - other: 其他内容（包括课前展示、通知、闲聊、过渡语、非教学有效信息）
+
+5. 只有 exam 和 focus 才允许收录，other 必须返回空内容。
+
 请完成以下任务：
 1. 判断这段内容是否值得收录（无关内容返回空）
-2. 如果值得收录：
+2. 判断重要程度（exam/focus/other）并给出 0-100 分重要性分数
+3. 如果值得收录：
    - 提取 3-5 个核心专业名词作为关键词
    - 总结为详细的重点摘要（150字左右）
    - 识别考点并给出复习建议
@@ -38,6 +46,9 @@ SKILLS = {
 JSON格式：
 {{
     "is_relevant": true/false,
+    "importance_level": "exam/focus/other",
+    "importance_score": 0,
+    "importance_reason": "判定依据",
     "keywords": ["专业词1", "专业词2"],
     "summary": "考点摘要...",
     "exam_points": ["考点1", "考点2"],
@@ -60,8 +71,14 @@ JSON格式：
 
 如果内容无关，请明确返回 is_relevant: false
 
+【分级标准】
+- exam: 明确考试相关、题型、常考点、老师说会考
+- focus: 核心理论、定义、公式、推导步骤、关键知识框架
+- other: 其余内容（全部不收录）
+
 【分析要求】
 1. 判断内容是否与考试/学习相关
+2. 给出重要程度 importance_level（exam/focus/other）和 importance_score（0-100）
 2. 如果相关：
    - 核心概念：提取专业术语（3-5个）
    - 详细摘要：150-200字
@@ -75,6 +92,9 @@ JSON格式：
 JSON格式：
 {{
     "is_relevant": true/false,
+    "importance_level": "exam/focus/other",
+    "importance_score": 0,
+    "importance_reason": "判定依据",
     "keywords": ["概念1", "概念2"],
     "summary": "详细摘要...",
     "exam_points": ["考点1: ...", "考点2: ..."],
@@ -90,15 +110,16 @@ JSON格式：
         "analysis_prompt": """
 从以下课堂内容中提取（忽略无关内容）：
 1. 是否相关（true/false）
-2. 关键词（3个）
-3. 简短总结（50字）
-4. 如果有结构化重点（如"四点"），列出每一点
-5. 最佳PPT截图时间点
+2. 重要程度（exam/focus/other）和分数（0-100）
+3. 关键词（3个）
+4. 简短总结（50字）
+5. 如果有结构化重点（如"四点"），列出每一点
+6. 最佳PPT截图时间点
 
 {context}
 
 JSON格式：
-{{"is_relevant": true, "keywords": [], "summary": "", "structured_points": [], "best_time": 0}}
+{{"is_relevant": true, "importance_level": "focus", "importance_score": 70, "importance_reason": "", "keywords": [], "summary": "", "structured_points": [], "best_time": 0}}
 """
     }
 }

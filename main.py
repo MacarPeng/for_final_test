@@ -13,7 +13,7 @@ if os.name == 'nt':
             if 'bin' in dirs:
                 bin_path = os.path.join(root, 'bin')
                 os.add_dll_directory(bin_path)
-                print(f"✅ 已手动加载 GPU 依赖库: {bin_path}")
+                print(f"[OK] 已手动加载 GPU 依赖库: {bin_path}")
 # ---------------------------------------
 
 from moviepy import VideoFileClip
@@ -31,7 +31,7 @@ from tqdm import tqdm
 from openai import OpenAI
 import json
 from prompt_config import SKILLS, PPT_SELECTION_PROMPT, GLOBAL_SUMMARY_PROMPT
-from keywords_config import DEFAULT_KEYWORDS, COURSE_KEYWORDS
+from keywords_config import REQUIRED_KEYWORDS
 from stop_words import STOP_WORDS
 
 # 语音识别模型配置
@@ -140,6 +140,59 @@ def find_keyword_hits(segments, keywords):
                 last_hit_time = start_time
                 print(f"🚩 命中关键词，时间点：{start_time:.1f}s，内容：{text}")
     return hit_times
+
+
+def collect_candidate_times(segments, keywords, interval_sec=180, min_gap_sec=90):
+    """混合召回候选时间点：关键词命中 + 固定时间采样（跨学科兜底）。"""
+    if not segments:
+        return []
+
+    keyword_hits = find_keyword_hits(segments, keywords)
+
+    max_t = float(segments[-1]['end'])
+    sampled_hits = []
+    cursor = interval_sec / 2
+    while cursor < max_t:
+        sampled_hits.append(cursor)
+        cursor += interval_sec
+
+    merged = sorted(keyword_hits + sampled_hits)
+    deduped = []
+    for t in merged:
+        if not deduped or (t - deduped[-1]) >= min_gap_sec:
+            deduped.append(float(t))
+
+    print(f"📌 候选片段：关键词召回 {len(keyword_hits)} 个，时间采样 {len(sampled_hits)} 个，合并后 {len(deduped)} 个")
+    return deduped
+
+
+def is_low_value_window(window_text):
+    """基于规则过滤明显低价值片段，减少学生展示/寒暄造成的误收录。"""
+    text = (window_text or "").strip()
+    if not text:
+        return True
+
+    low_value_patterns = [
+        r"我们是第.{0,6}组",
+        r"课堂展示",
+        r"课前展示",
+        r"接下来有(请|我)的队友",
+        r"我们的报告(就)?到这里",
+        r"谢谢(大家|同学|两位同学)",
+        r"开了一个非常好的头",
+        r"生活化聊天",
+    ]
+
+    exam_or_focus_signals = [
+        "考试", "期末", "必考", "会考", "考点", "重点", "难点", "记住", "掌握", "题型", "定义", "公式", "推导"
+    ]
+
+    import re
+    has_low_value_pattern = any(re.search(p, text) for p in low_value_patterns)
+    has_focus_signal = any(s in text for s in exam_or_focus_signals)
+
+    # 命中明显展示/寒暄模式且缺少考点信号时，直接判为低价值。
+    return has_low_value_pattern and not has_focus_signal
 
 def analyze_and_update_stop_words(all_segments):
     """利用LLM分析课程词频，找出高频无意义词汇"""
@@ -306,14 +359,20 @@ def analyze_hits_and_extract_ppt(hit_times, all_segments, save_dir, ppt_path=Non
         window_segments = [s for s in all_segments if start_range <= s['start'] <= end_range]
         window_text = "".join([s['text'] for s in window_segments])
 
+        # 先规则过滤明显低价值内容，减少过拟合与无用片段收录
+        if is_low_value_window(window_text):
+            print("   ⏭️ 命中低价值片段规则（展示/寒暄），跳过")
+            continue
+
         # 请求 DeepSeek 分析
         print(f"🧠 正在分析第 {i+1}/{len(hit_times)} 个重点片段...")
         ai_data = get_llm_advanced_analysis(window_segments, t)
         
-        # 检查内容是否相关，不相关则跳过
+        # 检查内容是否相关，并按优先级过滤
         is_relevant = ai_data.get('is_relevant', True)
-        if is_relevant is False or is_relevant == "false":
-            print(f"   ⏭️ 内容不相关，跳过")
+        importance_level = ai_data.get('importance_level', 'other')
+        if is_relevant is False or is_relevant == "false" or importance_level == "other":
+            print(f"   ⏭️ 内容不相关或优先级不足（{IMPORTANCE_LABELS.get(importance_level, importance_level)}），跳过")
             continue
         
         best_t = ai_data.get('best_time', t)
@@ -333,6 +392,9 @@ def analyze_hits_and_extract_ppt(hit_times, all_segments, save_dir, ppt_path=Non
         
         results.append({
             'hit_time': best_t,
+            'importance_level': importance_level,
+            'importance_score': ai_data.get('importance_score', 0),
+            'importance_reason': ai_data.get('importance_reason', ''),
             'top_words': ai_data.get('keywords', []),
             'summary': ai_data.get('summary', ''),
             'exam_points': ai_data.get('exam_points', []),
@@ -345,8 +407,26 @@ def analyze_hits_and_extract_ppt(hit_times, all_segments, save_dir, ppt_path=Non
 
 def find_related_ppt_pages(slides_text, segment_info, window_text):
     """根据片段信息从PPT中找到相关页面"""
+    ppt_preview = chr(10).join([
+        f"第{s['page']}页: {s['text'][:300]}..."
+        for s in slides_text[:40]
+    ])
+
     prompt = f"""
-你是一个学术助手。现在需要从PPT中找出与课堂重点片段相关的页面。
+你是一个“严格证据驱动”的课程内容匹配助手。任务是：从 PPT 中找到与课堂重点片段“直接讲解同一知识点”的页面。
+
+请务必遵守：宁缺毋滥。若证据不足，返回空列表 []。
+
+【优先级规则】
+1) 第一优先：与“考点/会考/必考/题型/定义/公式/推导/结论”直接对应的页面。
+2) 第二优先：老师明确强调的核心概念页。
+3) 其他内容一律不选：目录、封面、过渡页、感谢页、课前展示页、背景介绍页、与本片段无直接术语重叠的页面。
+
+【严格匹配规则】
+1) 必须有“可解释的证据重叠”：页面文本中应出现课堂片段关键词或同义概念。
+2) 只选最相关的 0-2 页，默认 1 页；不允许为了凑数而选。
+3) 如果页面只有标题、图片、装饰性文字，且无实质知识点，不能入选。
+4) 如果片段明显属于课堂管理/展示/寒暄内容，直接返回空列表。
 
 【课堂重点片段信息】
 - 时间点: {segment_info['time']:.1f}秒
@@ -358,14 +438,14 @@ def find_related_ppt_pages(slides_text, segment_info, window_text):
 {window_text[:1000]}
 
 【PPT各页内容】
-{chr(10).join([f"第{s['page']}页: {s['text'][:300]}..." for s in slides_text[:30]])}
+{ppt_preview}
 
-请找出与这个课堂片段最相关的PPT页面（可能1-2页）。
+请找出与这个课堂片段最相关的 PPT 页面（0-2 页）。
 
-要求：
-1. 只选择真正讲解了关键词/考点的页面
-2. 不要选择无关页面（如目录页、封面页等，除非确实相关）
-3. 返回页码列表
+输出要求：
+1. 若无明确证据，返回空列表。
+2. 有结果时，按相关性从高到低排序。
+3. reason 必须说明“为什么选这些页”，并简述排除其它页的依据。
 
 JSON格式：
 {{"related_pages": [页码1], "reason": "理由"}}
@@ -385,6 +465,19 @@ JSON格式：
         res_dict = json.loads(content_str)
         pages = res_dict.get("related_pages", [])
         reason = res_dict.get("reason", "")
+
+        # 防御性清洗：只保留合法页码，按出现顺序去重，最多保留 2 页。
+        cleaned_pages = []
+        max_page = len(slides_text)
+        for p in pages:
+            try:
+                page_num = int(p)
+            except:
+                continue
+            if 1 <= page_num <= max_page and page_num not in cleaned_pages:
+                cleaned_pages.append(page_num)
+
+        pages = cleaned_pages[:2]
         
         if pages:
             print(f"   📄 关联PPT页面: {pages} - {reason}")
@@ -564,6 +657,13 @@ def create_final_pdf(analysis_results, course_name, filename):
         pdf.set_font("Hans", size=15)
         time_text = f"重点片段：{int(t // 60)}分{int(t % 60)}秒"
         pdf.cell(180, 12, text=time_text, fill=True, new_x="LMARGIN", new_y="NEXT")
+        level = item.get('importance_level', 'focus')
+        level_label = IMPORTANCE_LABELS.get(level, level)
+        score = int(float(item.get('importance_score', 0) or 0))
+        pdf.set_font("Hans", size=11)
+        pdf.set_text_color(100, 30, 30)
+        pdf.cell(180, 8, text=f"优先级：{level_label}（{score}分）", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
         pdf.ln(5)
 
         # B. 核心词汇 - 强制重置 X 坐标
@@ -676,6 +776,13 @@ def create_pdf_with_ppt(analysis_results, ppt_images, course_name, filename):
         pdf.set_font("Hans", size=15, style="B")
         time_text = f"重点片段：{int(t // 60)}分{int(t % 60)}秒"
         pdf.cell(180, 12, text=time_text, fill=True, new_x="LMARGIN", new_y="NEXT")
+        level = item.get('importance_level', 'focus')
+        level_label = IMPORTANCE_LABELS.get(level, level)
+        score = int(float(item.get('importance_score', 0) or 0))
+        pdf.set_font("Hans", size=11)
+        pdf.set_text_color(100, 30, 30)
+        pdf.cell(180, 8, text=f"优先级：{level_label}（{score}分）", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
         pdf.ln(5)
 
         # B. 核心词汇
@@ -741,6 +848,11 @@ client = OpenAI(
 )
 
 CURRENT_SKILL = "default"  # 可选: "default", "detailed", "simple"
+IMPORTANCE_LABELS = {
+    "exam": "考点",
+    "focus": "老师强调重点",
+    "other": "其他（不收录）"
+}
 
 def get_llm_advanced_analysis(window_segments, default_time):
     """
@@ -769,13 +881,21 @@ def get_llm_advanced_analysis(window_segments, default_time):
         content_str = response.choices[0].message.content
         res_dict = json.loads(content_str)
         
-        # 检查内容是否相关
+        # 检查内容是否相关，并进行重要程度分级
         is_relevant = res_dict.get("is_relevant", True)
+        importance_level = str(res_dict.get("importance_level", "other")).strip().lower()
+        if importance_level not in {"exam", "focus", "other"}:
+            importance_level = "other"
+        importance_score = float(res_dict.get("importance_score", 0) or 0)
+        importance_reason = res_dict.get("importance_reason", "")
         
         # 如果不相关，返回特殊标记
-        if is_relevant is False or is_relevant == "false":
+        if is_relevant is False or is_relevant == "false" or importance_level == "other":
             return {
                 "is_relevant": False,
+            "importance_level": "other",
+            "importance_score": importance_score,
+            "importance_reason": importance_reason,
                 "keywords": [],
                 "summary": "",
                 "exam_points": [],
@@ -801,6 +921,9 @@ def get_llm_advanced_analysis(window_segments, default_time):
             
         return {
             "is_relevant": True,
+            "importance_level": importance_level,
+            "importance_score": importance_score,
+            "importance_reason": importance_reason,
             "keywords": keywords,
             "summary": summary,
             "exam_points": exam_points,
@@ -812,6 +935,10 @@ def get_llm_advanced_analysis(window_segments, default_time):
     except Exception as e:
         print(f"❌ DeepSeek 分析失败: {e}")
         return {
+            "is_relevant": False,
+            "importance_level": "other",
+            "importance_score": 0,
+            "importance_reason": "模型调用失败",
             "keywords": ["识别失败"],
             "summary": "由于网络或 API 原因，未能生成 AI 摘要。",
             "exam_points": [],
@@ -906,26 +1033,21 @@ if __name__ == "__main__":
     model = WhisperModel(MODEL_SIZE, device=device, compute_type=compute_type)
     segments = transcribe_audio(model, AUDIO_PATH)
     
-    # 自动生成关键词/更新stop_words选项
+    # 自动抓取策略（方案二）：必须关键词 + AI 分级判断
     print("\n--- 智能优化选项（可选）---")
-    print("1. 分析课程，生成专属关键词")
-    print("2. 分析课程，更新stop_words（过滤无意义词汇）")
-    print("3. 两者都做")
-    print("0. 跳过（使用默认配置）")
-    optimize_choice = input("请输入选项编号（默认0）: ").strip() or "0"
-    
-    final_keywords = DEFAULT_KEYWORDS
-    
-    if optimize_choice in ["1", "3"]:
-        course_keywords = generate_course_keywords(segments, base_name)
-        if course_keywords:
-            final_keywords = list(set(DEFAULT_KEYWORDS + course_keywords))
-            print(f"✅ 已添加课程专属关键词，当前关键词数: {len(final_keywords)}")
-    
-    if optimize_choice in ["2", "3"]:
+    print("1. 仅自动抓重点（推荐）")
+    print("2. 自动抓重点 + 更新stop_words（进一步降噪）")
+    optimize_choice = input("请输入选项编号（默认1）: ").strip() or "1"
+
+    # 仅使用必须关键词做弱触发，其余交给 AI 从文本中判断
+    final_keywords = list(REQUIRED_KEYWORDS)
+    print(f"✅ 已启用必须关键词，共 {len(final_keywords)} 个")
+
+    if optimize_choice == "2":
         analyze_and_update_stop_words(segments)
     
-    hits = find_keyword_hits(segments, final_keywords)
+    # 召回候选片段：关键词命中 + 时间采样兜底（不依赖手动关键词）
+    hits = collect_candidate_times(segments, final_keywords, interval_sec=180, min_gap_sec=90)
     
     if hits:
         # 先提取PPT文字（如果有）
@@ -941,10 +1063,24 @@ if __name__ == "__main__":
             ppt_path=ppt_path, slides_text=slides_text
         )
         
-        # 过滤掉不相关的内容
-        final_data = [r for r in raw_results if r.get('is_relevant', True) is not False]
+        # 过滤掉不相关/低优先级内容，仅保留 exam 和 focus
+        final_data = [
+            r for r in raw_results
+            if r.get('is_relevant', True) is not False and r.get('importance_level') in {'exam', 'focus'}
+        ]
+        level_weight = {'exam': 2, 'focus': 1}
+        final_data.sort(
+            key=lambda x: (
+                level_weight.get(x.get('importance_level', 'other'), 0),
+                float(x.get('importance_score', 0) or 0),
+                float(x.get('hit_time', 0) or 0)
+            ),
+            reverse=True
+        )
         
-        print(f"\n📊 原始命中: {len(raw_results)} 个 → 过滤后: {len(final_data)} 个相关内容")
+        exam_count = len([x for x in final_data if x.get('importance_level') == 'exam'])
+        focus_count = len([x for x in final_data if x.get('importance_level') == 'focus'])
+        print(f"\n📊 原始命中: {len(raw_results)} 个 → 收录: {len(final_data)} 个（考点 {exam_count} / 老师强调重点 {focus_count}）")
         
         if final_data:
             # 收集所有相关的PPT页面
